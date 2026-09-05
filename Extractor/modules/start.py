@@ -693,7 +693,7 @@ async def handle_callback(client, query):
     elif query.data == "app_exampur":
         api = "exampurapi.classx.co.in"
         name = "App Exampur"
-        await appex_v2_txt(app, query.message, api, name)
+        await appex_v5_txt(app, query.message, api, name)
 
     elif query.data=="classplus_":          
         await classplus_txt(app, query.message)
@@ -1067,15 +1067,24 @@ async def html_to_text_command(client: Client, message: Message):
             f.write(text_content)
             
         # Send the text file
-        await message.reply_document(
-            txt_path,
-            thumb=thumb_path if thumb_path else None,
-            caption="<blockquote>✅ HTML converted to text format\n🔓 All URLs have been decoded\n\n🤖 @GodxBots</blockquote>"
-        )
-        
-        # Cleanup
-        os.remove(file_path)
-        os.remove(txt_path)
+        try:
+            await message.reply_document(
+                txt_path,
+                thumb=thumb_path if thumb_path else None,
+                caption="<blockquote>✅ HTML converted to text format\n🔓 All URLs have been decoded\n\n🤖 @GodxBots</blockquote>"
+            )
+        finally:
+            # Cleanup
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
+            if os.path.exists(txt_path):
+                try:
+                    os.remove(txt_path)
+                except:
+                    pass
         await progress_msg.delete()
         
     except Exception as e:

@@ -208,6 +208,25 @@ async def extract(app, m, appname):
                 if not selected_ids:
                     await m.reply_text("❌ No valid batch IDs provided.", parse_mode=ParseMode.HTML)
                     return
+
+                opt_prompt = await m.reply_text(
+                    "**Choose extraction type:**\n\n"
+                    "1️⃣ 1 — 📦 **Full Batch**\n"
+                    "2️⃣ 2 — 📅 **Today's Class**"
+                )
+                today_only = False
+                try:
+                    opt_input = await app.listen(chat_id=m.chat.id, timeout=120)
+                    if opt_input and opt_input.text and opt_input.text.strip() == "2":
+                        today_only = True
+                    await opt_input.delete()
+                except:
+                    pass
+                finally:
+                    try:
+                        await opt_prompt.delete()
+                    except:
+                        pass
                 
                 # Process each selected batch
                 for batch_id in selected_ids:
@@ -324,12 +343,29 @@ async def extract(app, m, appname):
                                 
                             processed += 1
                             
+                        if today_only and all_urls:
+                            today_ist = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+                            t_patterns = [
+                                today_ist.strftime('%d-%m-%Y'),
+                                today_ist.strftime('%d/%m/%Y'),
+                                today_ist.strftime('%Y-%m-%d'),
+                                today_ist.strftime('%d %b %Y'),
+                                today_ist.strftime('%d %B %Y')
+                            ]
+                            all_urls = [u for u in all_urls if any(p in u for p in t_patterns)]
+
                         if not all_urls:
-                            await progress_msg.edit_text(
-                                f"❌ <b>No content found in batch: {batch_info['name']}</b>\n"
-                                "This batch might be empty or all content might be inaccessible.",
-                                parse_mode=ParseMode.HTML
-                            )
+                            if today_only:
+                                await progress_msg.edit_text(
+                                    "❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**",
+                                    parse_mode=ParseMode.HTML
+                                )
+                            else:
+                                await progress_msg.edit_text(
+                                    f"❌ <b>No content found in batch: {batch_info['name']}</b>\n"
+                                    "This batch might be empty or all content might be inaccessible.",
+                                    parse_mode=ParseMode.HTML
+                                )
                             continue
                             
                         # Create files

@@ -2,6 +2,9 @@ from pyrogram import Client, filters
 from pyrogram.types import Message
 import requests
 import json
+import os
+import datetime
+import pytz
 from Crypto.Cipher import AES
 from Crypto.Util.Padding import unpad
 from base64 import b64decode
@@ -99,6 +102,19 @@ async def rgvikramjeet(bot: Client, m: Message):
         input4 = await bot.listen(m.chat.id)
         topic_ids = input4.text.strip().split("&")
 
+        # Ask for extraction type
+        opt_input = await bot.ask(
+            m.chat.id,
+            "**Choose extraction type:**\n\n"
+            "1️⃣ 1 — 📦 **Full Batch**\n"
+            "2️⃣ 2 — 📅 **Today's Class**"
+        )
+        today_only = (opt_input.text.strip() == "2")
+        try:
+            await opt_input.delete()
+        except:
+            pass
+
         # Ask for resolution (if needed)
         await m.reply_text("Now send the **Resolution** (or type 'any'):")
         input5 = await bot.listen(m.chat.id)
@@ -124,13 +140,38 @@ async def rgvikramjeet(bot: Client, m: Message):
                     except Exception as e:
                         download_links.append(f"{title}: Failed to decrypt")
 
-        filename = f"Rgvikramjeet_{selected_course}.txt"
-        with open(filename, 'w') as f:
-            for line in download_links:
-                f.write(f"{line}\n")
+        if today_only and download_links:
+            today_ist = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).date()
+            t_patterns = [
+                today_ist.strftime('%d-%m-%Y'),
+                today_ist.strftime('%d/%m/%Y'),
+                today_ist.strftime('%Y-%m-%d'),
+                today_ist.strftime('%d %b %Y'),
+                today_ist.strftime('%d %B %Y')
+            ]
+            download_links = [u for u in download_links if any(p in u for p in t_patterns)]
 
-        await m.reply_document(filename)
-        await m.reply_text("✅ Done")
+        if not download_links:
+            if today_only:
+                await m.reply_text("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+            else:
+                await m.reply_text("⚠️ No links found.")
+            return
+
+        filename = f"Rgvikramjeet_{selected_course}.txt"
+        try:
+            with open(filename, 'w', encoding='utf-8') as f:
+                for line in download_links:
+                    f.write(f"{line}\n")
+
+            await m.reply_document(filename)
+            await m.reply_text("✅ Done")
+        finally:
+            if os.path.exists(filename):
+                try:
+                    os.remove(filename)
+                except:
+                    pass
 
     except Exception as e:
         await m.reply_text(f"❌ Error occurred: {e}")

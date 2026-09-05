@@ -140,7 +140,7 @@ Send batch ID to start extraction...
             await self.send_message(f"❌ Login error: {str(e)}")
             return False
 
-    async def extract_video_urls(self, batch_id: str) -> bool:
+    async def extract_video_urls(self, batch_id: str, today_only: bool = False) -> bool:
         try:
             await self.send_message("""
 🔄 <b>Initializing Video Extraction</b>
@@ -251,6 +251,18 @@ Send batch ID to start extraction...
 └─ Continuing with next section...""")
                     continue
             
+            if today_only and self.video_urls:
+                import pytz
+                today_ist = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+                t_patterns = [
+                    today_ist.strftime('%d-%m-%Y'),
+                    today_ist.strftime('%d/%m/%Y'),
+                    today_ist.strftime('%Y-%m-%d'),
+                    today_ist.strftime('%d %b %Y'),
+                    today_ist.strftime('%d %B %Y')
+                ]
+                self.video_urls = [u for u in self.video_urls if any(p in u for p in t_patterns)]
+
             # Save all URLs to file
             if self.video_urls:
                 with open("classes_links.txt", "w", encoding="utf-8") as f:
@@ -265,7 +277,10 @@ Send batch ID to start extraction...
 └─ Saved to: <code>classes_links.txt</code>""")
                 return True
             else:
-                await self.send_message("""
+                if today_only:
+                    await self.send_message("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+                else:
+                    await self.send_message("""
 ❌ <b>No Videos Found</b>
 └─ The package might be empty or inaccessible.""")
                 return False
@@ -372,14 +387,21 @@ Send batch ID to start extraction...
             except:
                 pass
         
-        # Remove tmp directory if empty
+        # Remove tmp directory
         try:
-            if os.path.exists(TMP_DIR) and not os.listdir(TMP_DIR):
-                os.rmdir(TMP_DIR)
+            if os.path.exists(TMP_DIR):
+                shutil.rmtree(TMP_DIR, ignore_errors=True)
         except:
             pass
 
-    async def extract_batch(self, batch_id: str, batch_name: str):
+        for fname in ["classes_links.txt"]:
+            if os.path.exists(fname):
+                try:
+                    os.remove(fname)
+                except:
+                    pass
+
+    async def extract_batch(self, batch_id: str, batch_name: str, today_only: bool = False):
         try:
             start_time = datetime.now()
             
@@ -389,10 +411,13 @@ Send batch ID to start extraction...
 └─ Name: <code>{batch_name}</code>""")
 
             # Extract video URLs
-            videos_extracted = await self.extract_video_urls(batch_id)
-            
+            videos_extracted = await self.extract_video_urls(batch_id, today_only=today_only)
+            if not videos_extracted:
+                return
+
+            zip_path = None
             # Download PDFs
-            if await self.download_pdfs(batch_id):
+            if not today_only and await self.download_pdfs(batch_id):
                 await self.send_message("📦 <b>Creating PDF Archive</b>\n└─ Please wait...")
                 # Create ZIP of PDFs
                 zip_path = self.create_zip(batch_name)
@@ -402,6 +427,34 @@ Send batch ID to start extraction...
             minutes = int(duration.total_seconds() // 60)
             seconds = int(duration.total_seconds() % 60)
             
+            # Send file to user
+            file_to_send = f"{batch_name}_videos.txt"
+            try:
+                if os.path.exists("classes_links.txt"):
+                    os.rename("classes_links.txt", file_to_send)
+                    if self.app and self.message:
+                        await self.app.send_document(self.message.chat.id, file_to_send)
+
+                if zip_path and os.path.exists(zip_path):
+                    if self.app and self.message:
+                        await self.app.send_document(self.message.chat.id, zip_path)
+            finally:
+                if os.path.exists(file_to_send):
+                    try:
+                        os.remove(file_to_send)
+                    except:
+                        pass
+                if os.path.exists("classes_links.txt"):
+                    try:
+                        os.remove("classes_links.txt")
+                    except:
+                        pass
+                if zip_path and os.path.exists(zip_path):
+                    try:
+                        os.remove(zip_path)
+                    except:
+                        pass
+
             # Final status with stats
             await self.send_message(f"""
 ✨ <b>Extraction Complete!</b>
@@ -410,10 +463,6 @@ Send batch ID to start extraction...
 ├─ Videos: <code>{len(self.video_urls)}</code> links extracted
 ├─ PDFs: <code>{len(self.pdf_files)}</code> files archived
 ├─ Duration: <code>{minutes}m {seconds}s</code>
-│
-├─ 📁 Output Files
-├─ Videos: <code>{batch_name}_videos.txt</code>
-└─ PDFs: <code>{batch_name}_PDFs.zip</code>
 
 <code>╾───• Anonymous TXT Extractor •───╼</code>""")
 
@@ -455,8 +504,23 @@ Example: <code>deweshkumar393@gmail.com*dev@vision</code>
             else:
                 batch_id = input("Enter batch ID: ")
             
+            today_only = False
+            if self.app and self.message:
+                opt_prompt = await self.app.ask(
+                    self.message.chat.id,
+                    "**Choose extraction type:**\n\n"
+                    "1️⃣ 1 — 📦 **Full Batch**\n"
+                    "2️⃣ 2 — 📅 **Today's Class**",
+                    timeout=300
+                )
+                today_only = (opt_prompt.text.strip() == "2")
+                try:
+                    await opt_prompt.delete()
+                except:
+                    pass
+
             # Extract content
-            await self.extract_batch(batch_id, f"Batch_{batch_id}")
+            await self.extract_batch(batch_id, f"Batch_{batch_id}", today_only=today_only)
             
         except Exception as e:
             await self.send_message(f"❌ Error: {str(e)}")

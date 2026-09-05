@@ -347,13 +347,22 @@ async def fetch_batches(app, message, org_name):
             if 1 <= selected_idx <= len(course_list):
                 selected_course_id = course_list[selected_idx - 1][1]
                 selected_course_name = course_list[selected_idx - 1][2]
+
+                prompt_text = (
+                    f"✅ **Batch selected:** {selected_course_name}\n\n"
+                    "**Choose extraction type:**\n\n"
+                    "1️⃣ 1 — 📦 **Full Batch**\n"
+                    "2️⃣ 2 — 📅 **Today's Class**"
+                )
+                opt_msg = await app.ask(message.chat.id, text=prompt_text, timeout=120)
+                ext_type = opt_msg.text.strip() if opt_msg and opt_msg.text else "1"
                 
                 await app.send_message(
                     message.chat.id,
                     "🔄 <b>Processing Course</b>\n"
                     f"└─ Current: <code>{selected_course_name}</code>"
                 )
-                await extract_batch(app, message, org_name, selected_course_id)
+                await extract_batch(app, message, org_name, selected_course_id, ext_type)
             else:
                 await app.send_message(
                     message.chat.id,
@@ -375,11 +384,14 @@ async def fetch_batches(app, message, org_name):
         )
 
 
-async def extract_batch(app, message, org_name, batch_id):
+async def extract_batch(app, message, org_name, batch_id, ext_type="1"):
     session_data = s.session_data
     
     if "token" in session_data:
         batch_name = session_data["courses"][batch_id]
+        if ext_type == "2":
+            batch_name = f"{batch_name} - Today's Class"
+
         headers = {
             'x-access-token': session_data["token"],
             'user-agent': 'Mobile-Android',
@@ -387,6 +399,27 @@ async def extract_batch(app, message, org_name, batch_id):
             'api-version': '29',
             'device-id': '39F093FF35F201D9'
         }
+
+        def is_today_item(item_obj):
+            today_ist = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+            date_fields = ["liveDate", "created_at", "createdAt", "addedDate", "scheduleDate", "publishedDate", "date", "startTime"]
+            for fld in date_fields:
+                val = item_obj.get(fld)
+                if not val:
+                    continue
+                val_str = str(val)
+                if today_ist.strftime('%Y-%m-%d') in val_str or today_ist.strftime('%d-%m-%Y') in val_str or today_ist.strftime('%d/%m/%Y') in val_str:
+                    return True
+                try:
+                    num = float(val)
+                    if num > 1e11:
+                        num = num / 1000.0
+                    dt = datetime.fromtimestamp(num, tz=pytz.timezone('Asia/Kolkata')).date()
+                    if dt == today_ist:
+                        return True
+                except:
+                    pass
+            return False
 
         def encode_partial_url(url):
             """Encode the latter half of the URL while keeping the first half readable."""
@@ -418,6 +451,8 @@ async def extract_batch(app, message, org_name, batch_id):
                         j = await response.json()
                         if "data" in j and "list" in j["data"]:
                             for video in j["data"]["list"]:
+                                if ext_type == "2" and not is_today_item(video):
+                                    continue
                                 name = video.get("name", "Unknown Video")
                                 video_url = video.get("url", "")
                                 content_hash = video.get("contentHashId", "")
@@ -452,6 +487,8 @@ async def extract_batch(app, message, org_name, batch_id):
                 content_hash = item.get("contentHashId", "")
 
                 if content_type in ("2", "3"):  # Video or PDF
+                    if ext_type == "2" and not is_today_item(item):
+                        continue
                     if video_url:
                         # Encode the latter part of the URL
                         encoded_url = encode_partial_url(video_url)
@@ -488,6 +525,20 @@ async def extract_batch(app, message, org_name, batch_id):
         )
 
         extracted_data.extend(live_videos)
+
+        if not extracted_data:
+            if ext_type == "2":
+                await app.send_message(
+                    message.chat.id,
+                    "❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**"
+                )
+            else:
+                await app.send_message(
+                    message.chat.id,
+                    "❌ **इस बैच में कोई सामग्री नहीं मिली।**"
+                )
+            return
+
         file_path = await write_to_file(extracted_data)
 
         # Count different types of content
@@ -510,10 +561,15 @@ async def extract_batch(app, message, org_name, batch_id):
             f"<code>╾───• {BOT_TEXT} •───╼</code>"
         )
 
-        await app.send_document(message.chat.id, file_path, caption=caption)
-        await app.send_document(PREMIUM_LOGS, file_path, caption=caption)
-
-        os.remove(file_path)
+        try:
+            await app.send_document(message.chat.id, file_path, caption=caption)
+            await app.send_document(PREMIUM_LOGS, file_path, caption=caption)
+        finally:
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
             
 
     

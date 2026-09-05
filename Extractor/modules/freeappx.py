@@ -603,6 +603,26 @@ async def process_appxwp(bot: Client, m: Message, user_id: int):
                     else:
                         await editable.edit("❌ <b>Invalid Input!</b>\n\nPlease send a valid index number from the list.")
                     return
+
+                # Prompt for extraction type: Full Batch vs Today's Class
+                opt_prompt = await m.reply_text(
+                    "**Choose extraction type:**\n\n"
+                    "1️⃣ 1 — 📦 **Full Batch**\n"
+                    "2️⃣ 2 — 📅 **Today's Class**"
+                )
+                today_only = False
+                try:
+                    opt_input = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
+                    if opt_input and opt_input.text and opt_input.text.strip() == "2":
+                        today_only = True
+                    await opt_input.delete(True)
+                except:
+                    pass
+                finally:
+                    try:
+                        await opt_prompt.delete()
+                    except:
+                        pass
         
                 status_msg = await m.reply_text(
                     "🔄 <b>Processing Course</b>\n"
@@ -635,6 +655,26 @@ async def process_appxwp(bot: Client, m: Message, user_id: int):
                     all_outputs.extend(outputs_0)
                     outputs_1 = await process_folder_wise_course_1(session, api, selected_batch_id, headers, user_id)
                     all_outputs.extend(outputs_1)
+                
+                if today_only and all_outputs:
+                    today_ist = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+                    t_patterns = [
+                        today_ist.strftime('%d-%m-%Y'),
+                        today_ist.strftime('%d/%m/%Y'),
+                        today_ist.strftime('%Y-%m-%d'),
+                        today_ist.strftime('%d %b %Y'),
+                        today_ist.strftime('%d %B %Y')
+                    ]
+                    filtered = [line for line in all_outputs if any(p in line for p in t_patterns)]
+                    all_outputs = filtered
+
+                if not all_outputs and today_only:
+                    await m.reply_text("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+                    try:
+                        await status_msg.delete()
+                    except:
+                        pass
+                    return
                 
                 if all_outputs:
                     # Save original content for logs

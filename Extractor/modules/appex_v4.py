@@ -61,7 +61,35 @@ async def fetch(session, url, headers):
         return {}
 
 
-async def handle_course(session, api_base, bi, si, sn, topic, hdr1):
+def is_today_appx_item(video_obj, r4_data=None):
+    today_ist = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+    objs = [video_obj]
+    if r4_data and isinstance(r4_data, dict):
+        objs.append(r4_data)
+    
+    date_fields = ["created_at", "createdAt", "start_date", "startDate", "live_date", "liveDate", "date", "PublishDate", "publish_date", "schedule_date"]
+    for obj in objs:
+        if not isinstance(obj, dict):
+            continue
+        for fld in date_fields:
+            val = obj.get(fld)
+            if not val:
+                continue
+            val_str = str(val)
+            if today_ist.strftime('%Y-%m-%d') in val_str or today_ist.strftime('%d-%m-%Y') in val_str or today_ist.strftime('%d/%m/%Y') in val_str:
+                return True
+            try:
+                num = float(val)
+                if num > 1e11:
+                    num = num / 1000.0
+                dt = datetime.fromtimestamp(num, tz=pytz.timezone('Asia/Kolkata')).date()
+                if dt == today_ist:
+                    return True
+            except:
+                pass
+    return False
+
+async def handle_course(session, api_base, bi, si, sn, topic, hdr1, today_only=False):
     ti = topic.get("topicid")
     tn = topic.get("topic_name")
     
@@ -69,13 +97,12 @@ async def handle_course(session, api_base, bi, si, sn, topic, hdr1):
     r3 = await fetch(session, url, hdr1)
     video_data = sorted(r3.get("data", []), key=lambda x: x.get("id"))  
 
-    
-    tasks = [process_video(session, api_base, bi, si, sn, ti, tn, video, hdr1) for video in video_data]
+    tasks = [process_video(session, api_base, bi, si, sn, ti, tn, video, hdr1, today_only) for video in video_data]
     results = await asyncio.gather(*tasks)
     
     return [line for lines in results if lines for line in lines]
 
-async def process_video(session, api_base, bi, si, sn, ti, tn, video, hdr1):
+async def process_video(session, api_base, bi, si, sn, ti, tn, video, hdr1, today_only=False):
     vi = video.get("id")
     vn = video.get("Title")
     lines = []
@@ -85,6 +112,9 @@ async def process_video(session, api_base, bi, si, sn, ti, tn, video, hdr1):
         
         if not r4 or not r4.get("data"):
             print(f"Skipping video ID {vi}: No data found.")
+            return None
+
+        if today_only and not is_today_appx_item(video, r4.get("data", {})):
             return None
 
         vt = r4.get("data", {}).get("Title", "")
@@ -348,15 +378,22 @@ async def appex_v5_txt(app, message, api, name):
         editable1 = await message.reply_text(success_msg)
     else:
         file_path = f"{app_name}_batches.txt"
-        with open(file_path, "w") as file:
-            file.write(f"{success_msg}\n\nToken: {token}")
+        with open(file_path, "w", encoding="utf-8") as file:
+            file.write(success_msg)
 
-        await app.send_document(
-            message.chat.id,
-            document=file_path,
-            caption="📚 Batch list exported to file due to large size"
-        )
-        await app.send_document(PREMIUM_LOGS, document=file_path)
+        try:
+            await app.send_document(
+                message.chat.id,
+                document=file_path,
+                caption="📚 Batch list exported to file due to large size"
+            )
+            await app.send_document(PREMIUM_LOGS, document=file_path)
+        finally:
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except Exception:
+                    pass
         editable1 = None
 
     batch_prompt = (
@@ -392,6 +429,17 @@ async def appex_v5_txt(app, message, api, name):
             await editable1.delete(True)
         return
 
+    course_name_display = next((ct.get("course_name") for ct in mc1.get("data", []) if str(ct.get("id")) in batch_ids), "Selected Batch")
+    prompt_text = (
+        f"✅ **Batch selected:** {course_name_display}\n\n"
+        "**Choose extraction type:**\n\n"
+        "1️⃣ 1 — 📦 **Full Batch**\n"
+        "2️⃣ 2 — 📅 **Today's Class**"
+    )
+    opt_msg = await app.ask(message.chat.id, text=prompt_text, timeout=120)
+    ext_type = opt_msg.text.strip() if opt_msg and opt_msg.text else "1"
+    today_only = (ext_type == "2")
+
     m1 = await message.reply_text("Processing your requested batches...")
 
     # Process each batch ID sequentially like v3
@@ -414,12 +462,12 @@ async def appex_v5_txt(app, message, api, name):
             except:
                 # If JSON parsing fails, try v2_new method
                 sanitized_course_name = course_name.replace(':', '_').replace('/', '_')
-                await v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_base, sanitized_course_name, start_time, start_date, end_date, price, input2, m1, m2)
+                await v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_base, sanitized_course_name, start_time, start_date, end_date, price, input2, m1, m2, today_only=today_only)
                 continue
 
             if not r_json.get("data"):
                 sanitized_course_name = course_name.replace(':', '_').replace('/', '_')
-                await v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_base, sanitized_course_name, start_time, start_date, end_date, price, input2, m1, m2)
+                await v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_base, sanitized_course_name, start_time, start_date, end_date, price, input2, m1, m2, today_only=today_only)
                 continue
 
             for i in r_json.get("data", []):
@@ -443,7 +491,7 @@ async def appex_v5_txt(app, message, api, name):
                                 r2 = await fetch(session, f"{api_base}/get/alltopicfrmlivecourseclass?courseid={raw_text2}&subjectid={si}&start=-1", hdr1)
                                 topics = sorted(r2.get("data", []), key=lambda x: x.get("topicid"))
 
-                                tasks = [handle_course(session, api_base, raw_text2, si, sn, t, hdr1) for t in topics]
+                                tasks = [handle_course(session, api_base, raw_text2, si, sn, t, hdr1, today_only=today_only) for t in topics]
                                 all_data = await asyncio.gather(*tasks)
                     
                                 for data in all_data:
@@ -454,19 +502,27 @@ async def appex_v5_txt(app, message, api, name):
                             print(f"An error occurred while processing batch {raw_text2}: {str(e)}")
                             await message.reply_text(f"⚠️ Error processing batch {raw_text2}. Trying alternative method...")
                             sanitized_course_name = course_name.replace(':', '_').replace('/', '_')
-                            await v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_base, sanitized_course_name, start_time, start_date, end_date, price, input2, m1, m2)
+                            await v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_base, sanitized_course_name, start_time, start_date, end_date, price, input2, m1, m2, today_only=today_only)
                             continue
                         
+                    if os.path.exists(filename1) and os.path.getsize(filename1) == 0:
+                        os.remove(filename1)
+                        if today_only:
+                            await message.reply_text("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+                        else:
+                            await message.reply_text("❌ **इस बैच में कोई लिंक्स या सामग्री नहीं मिली।**")
+                        continue
+
                     end_time = time.time()
                     elapsed_time = end_time - start_time
                     print(f"Elapsed time: {elapsed_time:.1f} seconds")
                     
-                    # Using v3's caption format
+                    batch_display_title = f"{raw_text2}_{txtn} (Today's Class)" if today_only else f"{raw_text2}_{txtn}"
                     caption = (
                         "࿇ ══━━ 🏦 ━━══ ࿇\n\n"
                         f"🌀 **Aᴘᴘ Nᴀᴍᴇ** : {app_name}\n"
                         f"============================\n\n"
-                        f"🎯 **Bᴀᴛᴄʜ Nᴀᴍᴇ** : `{raw_text2}_{txtn}`\n"
+                        f"🎯 **Bᴀᴛᴄʜ Nᴀᴍᴇ** : `{batch_display_title}`\n"
                         f"🌟 **Cᴏᴜʀsᴇ Tʜᴜᴍʙɴᴀɪʟ** : <a href={thumbnail}>Thumbnail</a>\n\n"
                         f"📅 **Sᴛᴀʀᴛ Dᴀᴛᴇ** : {start_date}\n"
                         f"📅 **Eɴᴅ Dᴀᴛᴇ** : {end_date}\n"
@@ -494,7 +550,7 @@ async def appex_v5_txt(app, message, api, name):
             print(f"Error processing batch {raw_text2}: {str(e)}")
             await message.reply_text(f"⚠️ Failed to process batch {raw_text2}")
             sanitized_course_name = course_name.replace(':', '_').replace('/', '_')
-            await v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_base, sanitized_course_name, start_time, start_date, end_date, price, input2, m1, m2)
+            await v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_base, sanitized_course_name, start_time, start_date, end_date, price, input2, m1, m2, today_only=today_only)
         finally:
             try:
                 await m2.delete()

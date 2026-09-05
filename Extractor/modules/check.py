@@ -1,6 +1,7 @@
 import requests
 from Extractor import app
 import json
+import os
 import concurrent.futures
 import requests
 import asyncio
@@ -64,15 +65,22 @@ async def pw_command_handler(bot, m):
     cfile = await bot.ask(m.chat.id, "Please upload the credential file which has 'username:password' in this format in each line:")
     file_id = cfile.document.file_id
     file_path = await bot.download_media(file_id)
-    
-    appx = await app.ask(m.chat.id, "Please enter the appx api (without http://) which id pass u wanna")
-    api = appx.text.strip()
+    try:
+        appx = await app.ask(m.chat.id, "Please enter the appx api (without http://) which id pass u wanna")
+        api = appx.text.strip()
 
-    with open(file_path, "r") as f:
-        credentials_list = f.readlines()
+        with open(file_path, "r") as f:
+            credentials_list = f.readlines()
 
-    async def handle_credential_line(line):
-        n, p = line.strip().split(':')
-        await login_and_get_courses(n, p, api, m)
+        async def handle_credential_line(line):
+            if ':' in line:
+                n, p = line.strip().split(':', 1)
+                await login_and_get_courses(n, p, api, m)
 
-    await asyncio.gather(*(handle_credential_line(line) for line in credentials_list))
+        await asyncio.gather(*(handle_credential_line(line) for line in credentials_list))
+    finally:
+        if file_path and os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except:
+                pass

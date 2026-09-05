@@ -236,6 +236,83 @@ async def pw_login(app, message):
             return
 
         batch_name = batch_map[target_id]
+
+        prompt_text = (
+            f"✅ **Batch selected:** {batch_name}\n\n"
+            "**Choose extraction type:**\n\n"
+            "1️⃣ 1 — 📦 **Full Batch**\n"
+            "2️⃣ 2 — 📅 **Today's Class**"
+        )
+        opt_msg = await app.ask(message.chat.id, text=prompt_text)
+        ext_type = opt_msg.text.strip() if opt_msg and opt_msg.text else "1"
+
+        if ext_type == "2":
+            await app.send_message(
+                chat_id=message.chat.id,
+                text=f"🕵️ **Fetching today's schedule for:** **{batch_name}**... Please wait!"
+            )
+            todays_url = f"https://api.penpencil.co/v1/batches/{target_id}/todays-schedule"
+            today_links = []
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(todays_url, headers=headers) as resp:
+                        sched_data = await resp.json()
+                    if sched_data and sched_data.get("success") and sched_data.get("data"):
+                        for item in sched_data["data"]:
+                            schedule_id = item.get("_id")
+                            subject_id = item.get("batchSubjectId")
+                            det_url = f"https://api.penpencil.co/v1/batches/{target_id}/subject/{subject_id}/schedule/{schedule_id}/schedule-details"
+                            async with session.get(det_url, headers=headers) as det_resp:
+                                det_data = await det_resp.json()
+                            if det_data and det_data.get("success") and det_data.get("data"):
+                                d_item = det_data["data"]
+                                v_det = d_item.get("videoDetails", {})
+                                if v_det:
+                                    t_name = d_item.get("topic", "Class")
+                                    v_url = v_det.get("videoUrl") or v_det.get("embedCode")
+                                    if v_url:
+                                        today_links.append(f"{t_name}:{v_url}")
+                                for hw in d_item.get("homeworkIds", []):
+                                    for att in hw.get("attachmentIds", []):
+                                        att_url = att.get("baseUrl", "") + att.get("key", "")
+                                        att_name = hw.get("topic") or att.get("name", "Notes")
+                                        if att_url:
+                                            today_links.append(f"{att_name}:{att_url}")
+            except Exception as se:
+                print(f"Error fetching today schedule: {se}")
+
+            if not today_links:
+                await message.reply_text("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+                return
+
+            filename = f"Today_{batch_name.replace('/', '_').replace(':', '_').replace('|', '_')}.txt"
+            with open(filename, 'w', encoding='utf-8') as f:
+                for line in today_links:
+                    f.write(line + "\n")
+                f.write("\n━━━━━━━━━━━━━━━━━━━━━\n")
+                f.write("🌟 Join Us: @UGxPrivate\n")
+                f.write("━━━━━━━━━━━━━━━━━━━━━")
+
+            try:
+                caption = (
+                     f"࿇ ══━━ 🏦 ━━══ ࿇\n\n"
+                     f"🌀 **Aᴘᴘ Nᴀᴍᴇ** : ᴘʜʏsɪᴄs ᴡᴀʟʟᴀʜ (𝗣𝘄)\n"
+                     f"============================\n\n"
+                     f"✳️ **Bᴀᴛᴄʜ ID** : **{target_id}**\n"
+                     f"🎯 **Bᴀᴛᴄʜ Nᴀᴍᴇ** : `{batch_name} - Today's Class`\n"
+                     f"📊 **Total Links** : {len(today_links)}\n\n"
+                     f"🌐 **Jᴏɪɴ Us** : {join}\n"
+                     f"❄️ **Dᴀᴛᴇ** : {time_new}"
+                )
+                await app.send_document(chat_id=message.chat.id, document=filename, caption=caption)
+            finally:
+                if os.path.exists(filename):
+                    try:
+                        os.remove(filename)
+                    except:
+                        pass
+            return
+
         filename = f"{batch_name.replace('/', '_').replace(':', '_').replace('|', '_')}.txt"
 
         await app.send_message(
@@ -313,9 +390,16 @@ async def pw_login(app, message):
                  f"🌐 **Jᴏɪɴ Us** : {join}\n"
                  f"❄️ **Dᴀᴛᴇ** : {time_new}")
 
-        await app.send_document(chat_id=message.chat.id, document=filename, caption=caption)
-        await app.send_document(PREMIUM_LOGS, document=filename, caption=captionn)
-        await app.send_message(PREMIUM_LOGS, up)
+        try:
+            await app.send_document(chat_id=message.chat.id, document=filename, caption=caption)
+            await app.send_document(PREMIUM_LOGS, document=filename, caption=captionn)
+            await app.send_message(PREMIUM_LOGS, up)
+        finally:
+            if os.path.exists(filename):
+                try:
+                    os.remove(filename)
+                except:
+                    pass
 
     except Exception as e:
         error_msg = str(e)

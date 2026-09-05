@@ -125,6 +125,18 @@ async def my_pathshala_login(app, message):
                         f"📚 <b>Available Batches:</b>\n\n{batch_text}"
                     )
 
+                    opt_prompt = await app.ask(
+                        message.chat.id,
+                        "**Choose extraction type:**\n\n"
+                        "1️⃣ 1 — 📦 **Full Batch**\n"
+                        "2️⃣ 2 — 📅 **Today's Class**"
+                    )
+                    today_only = (opt_prompt.text.strip() == "2")
+                    try:
+                        await opt_prompt.delete()
+                    except:
+                        pass
+
                     # Process each batch
                     for cdata in data:
                         try:
@@ -153,8 +165,22 @@ async def my_pathshala_login(app, message):
                                 link = f"https://mps.sgp1.digitaloceanspaces.com/prod/docs/courses/{pdf['document']}"
                                 all_urls.append(f"{title}:{link}")
 
+                            if today_only and all_urls:
+                                today_ist = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+                                t_patterns = [
+                                    today_ist.strftime('%d-%m-%Y'),
+                                    today_ist.strftime('%d/%m/%Y'),
+                                    today_ist.strftime('%Y-%m-%d'),
+                                    today_ist.strftime('%d %b %Y'),
+                                    today_ist.strftime('%d %B %Y')
+                                ]
+                                all_urls = [u for u in all_urls if any(p in u for p in t_patterns)]
+
                             if not all_urls:
-                                await progress_msg.edit_text("❌ <b>No content found in this batch</b>")
+                                if today_only:
+                                    await progress_msg.edit_text("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+                                else:
+                                    await progress_msg.edit_text("❌ <b>No content found in this batch</b>")
                                 continue
 
                             # Count content types
@@ -164,50 +190,51 @@ async def my_pathshala_login(app, message):
 
                             # Create file
                             file_name = f"MyPathshala_{cname}_{int(start_time.timestamp())}.txt"
-                            with open(file_name, 'w', encoding='utf-8') as f:
-                                f.write('\n'.join(all_urls))
-
-                            # Calculate duration
-                            duration = datetime.now() - start_time
-                            minutes, seconds = divmod(duration.total_seconds(), 60)
-
-                            # Prepare caption
-                            caption = (
-                                f"🎓 <b>COURSE EXTRACTED</b> 🎓\n\n"
-                                f"📱 <b>APP:</b> My Pathshala\n"
-                                f"📚 <b>BATCH:</b> {cname} (ID: {cid})\n"
-                                f"⏱ <b>EXTRACTION TIME:</b> {int(minutes):02d}:{int(seconds):02d}\n"
-                                f"📅 <b>DATE:</b> {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d-%m-%Y %H:%M:%S')} IST\n\n"
-                                f"📊 <b>CONTENT STATS</b>\n"
-                                f"├─ 📁 Total Links: {len(all_urls)}\n"
-                                f"├─ 🎬 Videos: {video_count}\n"
-                                f"├─ 📄 PDFs: {pdf_count}\n"
-                                f"└─ 📑 Documents: {doc_count}\n\n"
-                                f"🚀 <b>Extracted by:</b> @{(await app.get_me()).username}\n\n"
-                                f"<code>╾───• {BOT_TEXT} •───╼</code>"
-                            )
-
-                            # Send file
-                            await message.reply_document(
-                                document=file_name,
-                                caption=caption,
-                                parse_mode="html"
-                            )
-                            await app.send_document(PREMIUM_LOGS, file_name, caption=caption)
-
-                            # Cleanup
                             try:
-                                os.remove(file_name)
-                            except:
-                                pass
+                                with open(file_name, 'w', encoding='utf-8') as f:
+                                    f.write('\n'.join(all_urls))
 
-                            await progress_msg.edit_text(
-                                "✅ <b>Extraction completed successfully!</b>\n\n"
-                                f"📊 𝗙𝗶𝗻𝗮𝗹 𝗦𝘁𝗮𝘁𝘂𝘀:\n"
-                                f"📚 Processed: {cname}\n"
-                                f"📤 File has been uploaded\n\n"
-                                f"Thank you for using Anonymous TXT Extractor! 🌟"
-                            )
+                                # Calculate duration
+                                duration = datetime.now() - start_time
+                                minutes, seconds = divmod(duration.total_seconds(), 60)
+
+                                # Prepare caption
+                                caption = (
+                                    f"🎓 <b>COURSE EXTRACTED</b> 🎓\n\n"
+                                    f"📱 <b>APP:</b> My Pathshala\n"
+                                    f"📚 <b>BATCH:</b> {cname} (ID: {cid})\n"
+                                    f"⏱ <b>EXTRACTION TIME:</b> {int(minutes):02d}:{int(seconds):02d}\n"
+                                    f"📅 <b>DATE:</b> {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d-%m-%Y %H:%M:%S')} IST\n\n"
+                                    f"📊 <b>CONTENT STATS</b>\n"
+                                    f"├─ 📁 Total Links: {len(all_urls)}\n"
+                                    f"├─ 🎬 Videos: {video_count}\n"
+                                    f"├─ 📄 PDFs: {pdf_count}\n"
+                                    f"└─ 📑 Documents: {doc_count}\n\n"
+                                    f"🚀 <b>Extracted by:</b> @{(await app.get_me()).username}\n\n"
+                                    f"<code>╾───• {BOT_TEXT} •───╼</code>"
+                                )
+
+                                # Send file
+                                await message.reply_document(
+                                    document=file_name,
+                                    caption=caption,
+                                    parse_mode="html"
+                                )
+                                await app.send_document(PREMIUM_LOGS, file_name, caption=caption)
+
+                                await progress_msg.edit_text(
+                                    "✅ <b>Extraction completed successfully!</b>\n\n"
+                                    f"📊 𝗙𝗶𝗻𝗮𝗹 𝗦𝘁𝗮𝘁𝘂𝘀:\n"
+                                    f"📚 Processed: {cname}\n"
+                                    f"📤 File has been uploaded\n\n"
+                                    f"Thank you for using Anonymous TXT Extractor! 🌟"
+                                )
+                            finally:
+                                if os.path.exists(file_name):
+                                    try:
+                                        os.remove(file_name)
+                                    except:
+                                        pass
 
                         except Exception as e:
                             logger.error(f"Error processing batch {cname}: {e}")

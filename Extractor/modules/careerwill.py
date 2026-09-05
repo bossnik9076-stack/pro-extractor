@@ -33,7 +33,7 @@ def download_thumbnail(url):
         return None
 
 # -------------------- Downloader Function ---------------------
-async def careerdl(app, message, headers, raw_text2, token, raw_text3, prog, name):
+async def careerdl(app, message, headers, raw_text2, token, raw_text3, prog, name, today_only=False):
     num_id = raw_text3.split('&')
     result_text = ""
     total_videos = 0
@@ -126,6 +126,32 @@ async def careerdl(app, message, headers, raw_text2, token, raw_text3, prog, nam
             )
             await message.reply(error_msg)
 
+    if today_only and result_text:
+        import pytz
+        today_ist = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).date()
+        t_patterns = [
+            today_ist.strftime('%d-%m-%Y'),
+            today_ist.strftime('%d/%m/%Y'),
+            today_ist.strftime('%Y-%m-%d'),
+            today_ist.strftime('%d %b %Y'),
+            today_ist.strftime('%d %B %Y')
+        ]
+        filtered_lines = [line for line in result_text.splitlines() if any(p in line for p in t_patterns)]
+        result_text = '\n'.join(filtered_lines) + ('\n' if filtered_lines else '')
+
+    if not result_text.strip():
+        try:
+            await prog.delete()
+        except:
+            pass
+        if thumb_path and os.path.exists(thumb_path):
+            os.remove(thumb_path)
+        if today_only:
+            await message.reply("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+        else:
+            await message.reply("❌ <b>No content found in this batch.</b>")
+        return
+
     file_name = f"{name.replace('/', '')}.txt"
     with open(file_name, 'w', encoding='utf-8') as f:
         f.write(result_text)
@@ -164,10 +190,20 @@ async def careerdl(app, message, headers, raw_text2, token, raw_text3, prog, nam
         )
     finally:
         # Cleanup
-        await prog.delete()
-        os.remove(file_name)
+        try:
+            await prog.delete()
+        except:
+            pass
+        if os.path.exists(file_name):
+            try:
+                os.remove(file_name)
+            except:
+                pass
         if thumb_path and os.path.exists(thumb_path):
-            os.remove(thumb_path)
+            try:
+                os.remove(thumb_path)
+            except:
+                pass
 
 # -------------------- Main Command Handler ---------------------
 @app.on_message(filters.command("ugcw") & filters.private)
@@ -261,12 +297,24 @@ async def career_will(app: Client, message: Message):
         )
         raw_text3 = input3.text.strip()
 
+        opt_input = await app.ask(
+            message.chat.id,
+            "**Choose extraction type:**\n\n"
+            "1️⃣ 1 — 📦 **Full Batch**\n"
+            "2️⃣ 2 — 📅 **Today's Class**"
+        )
+        today_only = (opt_input.text.strip() == "2")
+        try:
+            await opt_input.delete()
+        except:
+            pass
+
         prog = await message.reply(
             "🔄 <b>Processing Content</b>\n\n"
             "├─ Status: Extracting content\n"
             "└─ Please wait..."
         )
-        threading.Thread(target=lambda: asyncio.run(careerdl(app, message, headers, raw_text2, token, raw_text3, prog, batch_name))).start()
+        threading.Thread(target=lambda: asyncio.run(careerdl(app, message, headers, raw_text2, token, raw_text3, prog, batch_name, today_only=today_only))).start()
 
     except Exception as e:
         error_msg = (

@@ -125,6 +125,18 @@ async def khan_login(app: Client, message: Message):
             selected_ids = input2.text.strip().split('&')
             await input2.delete()
             await editable.delete()
+
+            opt_input = await app.ask(
+                message.chat.id,
+                "**Choose extraction type:**\n\n"
+                "1️⃣ 1 — 📦 **Full Batch**\n"
+                "2️⃣ 2 — 📅 **Today's Class**"
+            )
+            today_only = (opt_input.text.strip() == "2")
+            try:
+                await opt_input.delete()
+            except:
+                pass
             
             # Process each selected batch
             for batch_id in selected_ids:
@@ -141,7 +153,7 @@ async def khan_login(app: Client, message: Message):
                     continue
                     
                 # Extract content
-                await extract_content(app, message, headers, selected_batch, progress_msg)
+                await extract_content(app, message, headers, selected_batch, progress_msg, today_only=today_only)
                 
         except Exception as e:
             logger.error(f"Error in login process: {e}")
@@ -151,7 +163,7 @@ async def khan_login(app: Client, message: Message):
         logger.error(f"Error in khan_login: {e}")
         await message.reply_text(f"❌ <b>An error occurred:</b>\n<code>{str(e)}</code>")
 
-async def extract_content(app, message, headers, batch, progress_msg):
+async def extract_content(app, message, headers, batch, progress_msg, today_only=False):
     """Extract content with improved error handling and workers."""
     try:
         start_time = time.time()
@@ -169,7 +181,10 @@ async def extract_content(app, message, headers, batch, progress_msg):
                 
         total_lessons = len(lessons)
         if not total_lessons:
-            await progress_msg.edit_text("❌ No lessons found in this batch.")
+            if today_only:
+                await progress_msg.edit_text("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+            else:
+                await progress_msg.edit_text("❌ No lessons found in this batch.")
             return
             
         # Initialize content storage
@@ -211,8 +226,22 @@ async def extract_content(app, message, headers, batch, progress_msg):
                     logger.error(f"Error processing lesson: {e}")
                     continue
                     
+        if today_only and all_urls:
+            today_ist = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+            t_patterns = [
+                today_ist.strftime('%d-%m-%Y'),
+                today_ist.strftime('%d/%m/%Y'),
+                today_ist.strftime('%Y-%m-%d'),
+                today_ist.strftime('%d %b %Y'),
+                today_ist.strftime('%d %B %Y')
+            ]
+            all_urls = [u for u in all_urls if any(p in u for p in t_patterns)]
+
         if not all_urls:
-            await progress_msg.edit_text("❌ No content found in this batch.")
+            if today_only:
+                await progress_msg.edit_text("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+            else:
+                await progress_msg.edit_text("❌ No content found in this batch.")
             return
             
         # Create simple txt file with URLs

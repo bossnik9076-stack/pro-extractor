@@ -187,6 +187,19 @@ async def adda_command_handler(app, m):
                 )
                 return
 
+            # Ask for extraction type
+            opt_prompt = await app.ask(
+                m.chat.id,
+                "**Choose extraction type:**\n\n"
+                "1️⃣ 1 — 📦 **Full Batch**\n"
+                "2️⃣ 2 — 📅 **Today's Class**"
+            )
+            today_only = (opt_prompt.text.strip() == "2")
+            try:
+                await opt_prompt.delete()
+            except:
+                pass
+
             # Download thumbnail for later use
             thumb_path = await download_thumbnail()
 
@@ -208,102 +221,111 @@ async def adda_command_handler(app, m):
                     )
 
                     start = time.time()
-                    file_name = f"ADDA_{package_id}_{package_title}.txt"
-                    total_items = 0
+                    all_urls = []
 
-                    with open(file_name, "w", encoding='utf-8') as file:
-                        # First try the direct content API
-                        content_response = await make_request(
-                            f"https://store.adda247.com/api/v1/my/purchase/content/{package_id}?src=aweb",
-                            headers=headers
-                        )
+                    # First try the direct content API
+                    content_response = await make_request(
+                        f"https://store.adda247.com/api/v1/my/purchase/content/{package_id}?src=aweb",
+                        headers=headers
+                    )
 
-                        if content_response:
-                            # Try to get content directly
-                            contents = safe_get(content_response, "data", "contents", default=[])
-                            if contents:
-                                await status_msg.edit_text(
-                                    f"🔄 <b>Processing Direct Content</b>\n\n"
-                                    f"📦 <code>{package_title}</code>",
-                                    parse_mode=ParseMode.HTML
-                                )
-                                
-                                for content in contents:
-                                    content_name = safe_get(content, "name", default="Untitled").replace('|', '_').replace('/', '_')
-                                    content_url = safe_get(content, "url")
-                                    if content_url:
-                                        file.write(f"{content_name}: {content_url}\n")
-                                        total_items += 1
-
-                        # If no direct content, try child packages
-                        if total_items == 0:
-                            # Try different category types
-                            categories = ["RECORDED_COURSE", "ONLINE_LIVE_CLASSES", "TEST_SERIES"]
+                    if content_response:
+                        # Try to get content directly
+                        contents = safe_get(content_response, "data", "contents", default=[])
+                        if contents:
+                            await status_msg.edit_text(
+                                f"🔄 <b>Processing Direct Content</b>\n\n"
+                                f"📦 <code>{package_title}</code>",
+                                parse_mode=ParseMode.HTML
+                            )
                             
-                            for category in categories:
-                                child_response = await make_request(
-                                    f"https://store.adda247.com/api/v3/ppc/package/child?packageId={package_id}&category={category}&isComingSoon=false&pageNumber=0&pageSize=100&src=aweb",
-                                    headers=headers
-                                )
+                            for content in contents:
+                                content_name = safe_get(content, "name", default="Untitled").replace('|', '_').replace('/', '_')
+                                content_url = safe_get(content, "url")
+                                if content_url:
+                                    all_urls.append(f"{content_name}: {content_url}")
 
-                                child_packages = safe_get(child_response, "data", "packages", default=[])
-                                
-                                if child_packages:
-                                    for child in child_packages:
-                                        child_id = safe_get(child, "packageId")
-                                        child_title = safe_get(child, "title", default="Untitled").replace('|', '_').replace('/', '_')
+                    # If no direct content, try child packages
+                    if not all_urls:
+                        # Try different category types
+                        categories = ["RECORDED_COURSE", "ONLINE_LIVE_CLASSES", "TEST_SERIES"]
+                        
+                        for category in categories:
+                            child_response = await make_request(
+                                f"https://store.adda247.com/api/v3/ppc/package/child?packageId={package_id}&category={category}&isComingSoon=false&pageNumber=0&pageSize=100&src=aweb",
+                                headers=headers
+                            )
+
+                            child_packages = safe_get(child_response, "data", "packages", default=[])
+                            
+                            if child_packages:
+                                for child in child_packages:
+                                    child_id = safe_get(child, "packageId")
+                                    child_title = safe_get(child, "title", default="Untitled").replace('|', '_').replace('/', '_')
+                                    
+                                    if not child_id:
+                                        continue
+
+                                    await status_msg.edit_text(
+                                        f"🔄 <b>Processing {category.replace('_', ' ').title()}</b>\n\n"
+                                        f"📦 <code>{package_title}</code>\n"
+                                        f"└─ 📚 <code>{child_title}</code>",
+                                        parse_mode=ParseMode.HTML
+                                    )
+
+                                    # Try different content endpoints
+                                    endpoints = [
+                                        (f"https://store.adda247.com/api/v1/my/purchase/OLC/{child_id}?src=aweb", "onlineClasses"),
+                                        (f"https://store.adda247.com/api/v1/my/purchase/content/{child_id}?src=aweb", "contents"),
+                                        (f"https://store.adda247.com/api/v1/my/purchase/test/{child_id}?src=aweb", "tests")
+                                    ]
+
+                                    for endpoint, content_key in endpoints:
+                                        content_response = await make_request(endpoint, headers=headers)
+                                        items = safe_get(content_response, "data", content_key, default=[])
                                         
-                                        if not child_id:
-                                            continue
-
-                                        await status_msg.edit_text(
-                                            f"🔄 <b>Processing {category.replace('_', ' ').title()}</b>\n\n"
-                                            f"📦 <code>{package_title}</code>\n"
-                                            f"└─ 📚 <code>{child_title}</code>",
-                                            parse_mode=ParseMode.HTML
-                                        )
-
-                                        # Try different content endpoints
-                                        endpoints = [
-                                            (f"https://store.adda247.com/api/v1/my/purchase/OLC/{child_id}?src=aweb", "onlineClasses"),
-                                            (f"https://store.adda247.com/api/v1/my/purchase/content/{child_id}?src=aweb", "contents"),
-                                            (f"https://store.adda247.com/api/v1/my/purchase/test/{child_id}?src=aweb", "tests")
-                                        ]
-
-                                        for endpoint, content_key in endpoints:
-                                            content_response = await make_request(endpoint, headers=headers)
-                                            items = safe_get(content_response, "data", content_key, default=[])
+                                        for item in items:
+                                            item_name = safe_get(item, "name", default="Untitled").replace('|', '_').replace('/', '_')
                                             
-                                            for item in items:
-                                                item_name = safe_get(item, "name", default="Untitled").replace('|', '_').replace('/', '_')
-                                                
-                                                # Handle PDF URL
-                                                pdf_file = safe_get(item, "pdfFileName") or safe_get(item, "pdf")
-                                                if pdf_file:
-                                                    pdf_link = f"https://store.adda247.com/{pdf_file}"
-                                                    file.write(f"{item_name}: {pdf_link}\n")
-                                                    total_items += 1
+                                            # Handle PDF URL
+                                            pdf_file = safe_get(item, "pdfFileName") or safe_get(item, "pdf")
+                                            if pdf_file:
+                                                pdf_link = f"https://store.adda247.com/{pdf_file}"
+                                                all_urls.append(f"{item_name}: {pdf_link}")
 
-                                                # Handle Video URL
-                                                video_url = safe_get(item, "url") or safe_get(item, "videoUrl")
-                                                if video_url:
-                                                    try:
-                                                        video_response = await make_request(
-                                                            f"https://videotest.adda247.com/file?vp={video_url}&pkgId={child_id}&isOlc=true",
-                                                            headers=headers
-                                                        )
-                                                        if video_response and isinstance(video_response, str):
-                                                            for line in video_response.split('\n'):
-                                                                if "480p30playlist.m3u8" in line:
-                                                                    stream_url = line.replace('/updated', '/demo/updated')
-                                                                    file.write(f"{item_name}: {stream_url}\n")
-                                                                    total_items += 1
-                                                                    break
-                                                    except Exception as e:
-                                                        logger.error(f"Error fetching video URL: {e}")
-                                                        continue
+                                            # Handle Video URL
+                                            video_url = safe_get(item, "url") or safe_get(item, "videoUrl")
+                                            if video_url:
+                                                try:
+                                                    video_response = await make_request(
+                                                        f"https://videotest.adda247.com/file?vp={video_url}&pkgId={child_id}&isOlc=true",
+                                                        headers=headers
+                                                    )
+                                                    if video_response and isinstance(video_response, str):
+                                                        for line in video_response.split('\n'):
+                                                            if "480p30playlist.m3u8" in line:
+                                                                stream_url = line.replace('/updated', '/demo/updated')
+                                                                all_urls.append(f"{item_name}: {stream_url}")
+                                                                break
+                                                except Exception as e:
+                                                    logger.error(f"Error fetching video URL: {e}")
+                                                    continue
 
-                        if total_items == 0:
+                    if today_only and all_urls:
+                        today_ist = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+                        t_patterns = [
+                            today_ist.strftime('%d-%m-%Y'),
+                            today_ist.strftime('%d/%m/%Y'),
+                            today_ist.strftime('%Y-%m-%d'),
+                            today_ist.strftime('%d %b %Y'),
+                            today_ist.strftime('%d %B %Y')
+                        ]
+                        all_urls = [u for u in all_urls if any(p in u for p in t_patterns)]
+
+                    if not all_urls:
+                        if today_only:
+                            await status_msg.edit_text("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+                        else:
                             logger.warning(f"No content found for package {package_id}")
                             await status_msg.edit_text(
                                 f"⚠️ <b>No Content Found</b>\n\n"
@@ -311,9 +333,13 @@ async def adda_command_handler(app, m):
                                 "This package might be empty or inaccessible.",
                                 parse_mode=ParseMode.HTML
                             )
-                            continue
+                        continue
 
-                    if os.path.getsize(file_name) > 0:
+                    file_name = f"ADDA_{package_id}_{package_title}.txt"
+                    try:
+                        with open(file_name, "w", encoding='utf-8') as file:
+                            file.write('\n'.join(all_urls))
+
                         end = time.time()
                         elapsed_time = end - start
                         mention = f'<a href="tg://user?id={m.from_user.id}">{m.from_user.first_name}</a>'
@@ -325,7 +351,7 @@ async def adda_command_handler(app, m):
                             f"⏱ <b>TIME TAKEN:</b> {elapsed_time:.1f}s\n"
                             f"📅 <b>DATE:</b> {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d-%m-%Y %H:%M:%S')} IST\n\n"
                             f"📊 <b>CONTENT STATS</b>\n"
-                            f"└─ 📁 Total Items: {total_items}\n\n"
+                            f"└─ 📁 Total Items: {len(all_urls)}\n\n"
                             f"🚀 <b>Extracted by:</b> {mention}\n\n"
                             f"<code>╾───• {BOT_TEXT} •───╼</code>"
                         )
@@ -346,12 +372,12 @@ async def adda_command_handler(app, m):
                             thumb=thumb_path if thumb_path else None,
                             parse_mode=ParseMode.HTML
                         )
-
-                    # Cleanup
-                    try:
-                        os.remove(file_name)
-                    except Exception as e:
-                        logger.error(f"Error removing file: {e}")
+                    finally:
+                        if os.path.exists(file_name):
+                            try:
+                                os.remove(file_name)
+                            except Exception as e:
+                                logger.error(f"Error removing file: {e}")
 
                 except Exception as e:
                     logger.error(f"Error processing package {package_id if 'package_id' in locals() else 'unknown'}: {e}")

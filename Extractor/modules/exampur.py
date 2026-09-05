@@ -110,7 +110,28 @@ def api_post(endpoint: str, payload_dict: dict, t_key: str, jwt_token: str = Non
     res_text = res.text.strip()
     return dec_response(res_text, t_key)
 
-def extract_course_contents(course_id: str, t_user: str, jwt_token: str, user_id: str):
+def is_today_exampur_item(f_obj):
+    today_ist = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+    date_fields = ["created", "created_at", "live_date", "start_date", "date", "schedule_date", "published_date"]
+    for fld in date_fields:
+        val = f_obj.get(fld)
+        if not val:
+            continue
+        val_str = str(val)
+        if today_ist.strftime('%Y-%m-%d') in val_str or today_ist.strftime('%d-%m-%Y') in val_str or today_ist.strftime('%d/%m/%Y') in val_str:
+            return True
+        try:
+            num = float(val)
+            if num > 1e11:
+                num = num / 1000.0
+            dt = datetime.fromtimestamp(num, tz=pytz.timezone('Asia/Kolkata')).date()
+            if dt == today_ist:
+                return True
+        except:
+            pass
+    return False
+
+def extract_course_contents(course_id: str, t_user: str, jwt_token: str, user_id: str, today_only: bool = False):
     """
     Recursively extracts all video & PDF links from an Exampur batch.
     """
@@ -149,6 +170,9 @@ def extract_course_contents(course_id: str, t_user: str, jwt_token: str, user_id
                 if isinstance(res_data, dict):
                     file_results = res_data.get("file_result", [])
                     for f in file_results:
+                        if today_only and not is_today_exampur_item(f):
+                            continue
+
                         f_title = f.get("title", "").strip()
                         f_url = f.get("file_url", "").strip()
                         v_type = str(f.get("video_type", ""))
@@ -274,6 +298,16 @@ async def exampur_txt(app, message):
         selected_batch_id = input2.text.strip()
         await input2.delete()
 
+        prompt_text = (
+            f"✅ **Batch selected:** <code>{selected_batch_id}</code>\n\n"
+            "**Choose extraction type:**\n\n"
+            "1️⃣ 1 — 📦 **Full Batch**\n"
+            "2️⃣ 2 — 📅 **Today's Class**"
+        )
+        opt_msg = await app.ask(message.chat.id, text=prompt_text)
+        ext_type = opt_msg.text.strip() if opt_msg and opt_msg.text else "1"
+        today_only = (ext_type == "2")
+
         progress_msg = await message.reply_text(
             f"🔄 <b>बैच <code>{selected_batch_id}</code> की जानकारी प्राप्त की जा रही है...</b>"
         )
@@ -338,14 +372,17 @@ async def exampur_txt(app, message):
             )
 
             try:
-                items = extract_course_contents(c_id, t_user, jwt_token, user_id)
+                items = extract_course_contents(c_id, t_user, jwt_token, user_id, today_only=today_only)
                 for item_title, item_url in items:
                     all_urls.append(f"{item_title}:{item_url}")
             except Exception as ee:
                 logger.error(f"Error extracting {c_id}: {ee}")
 
         if not all_urls:
-            await progress_msg.edit_text("❌ <b>इस बैच में कोई लिंक्स या सामग्री नहीं मिली।</b>")
+            if today_only:
+                await progress_msg.edit_text("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+            else:
+                await progress_msg.edit_text("❌ **इस बैच में कोई लिंक्स या सामग्री नहीं मिली।**")
             return
 
         # Prepare results & stats
@@ -362,10 +399,11 @@ async def exampur_txt(app, message):
             f.write('\n'.join(all_urls))
 
         bot_username = (await app.get_me()).username
+        batch_display = f"{selected_batch_id} - Today's Class" if today_only else str(selected_batch_id)
         caption = (
             f"🎓 <b>कोर्स सफलतापूर्वक एक्सट्रेक्ट हुआ</b> 🎓\n\n"
             f"📱 <b>ऐप:</b> Exampur (New API)\n"
-            f"📚 <b>बैच आईडी:</b> <code>{selected_batch_id}</code>\n"
+            f"📚 <b>बैच:</b> <code>{batch_display}</code>\n"
             f"⏱ <b>समय:</b> {int(minutes):02d} मिनट {int(seconds):02d} सेकंड\n"
             f"📅 <b>दिनांक:</b> {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d-%m-%Y %H:%M:%S')} IST\n\n"
             f"📊 <b>सामग्री आँकड़े:</b>\n"
@@ -377,16 +415,18 @@ async def exampur_txt(app, message):
             f"<code>╾───• {BOT_TEXT} •───╼</code>"
         )
 
-        await message.reply_document(
-            document=file_name,
-            caption=caption,
-            parse_mode="html"
-        )
-
         try:
-            os.remove(file_name)
-        except Exception:
-            pass
+            await message.reply_document(
+                document=file_name,
+                caption=caption,
+                parse_mode="html"
+            )
+        finally:
+            if os.path.exists(file_name):
+                try:
+                    os.remove(file_name)
+                except Exception:
+                    pass
 
         await progress_msg.edit_text(
             "✅ <b>एक्सट्रैक्शन सफलतापूर्वक पूरा हो गया!</b>\n\n"

@@ -53,7 +53,34 @@ def decode_base64(encoded_str):
         logger.error(f"Base64 decoding error: {e}")
         return ""
 
-async def fetch_item_details(session, api_base, course_id, item, headers):
+def is_today_mix_item(item_obj, data_obj=None):
+    today_ist = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+    objs = [item_obj]
+    if data_obj and isinstance(data_obj, dict):
+        objs.append(data_obj)
+    date_fields = ["created_at", "createdAt", "start_date", "startDate", "live_date", "liveDate", "date", "PublishDate", "publish_date", "schedule_date"]
+    for obj in objs:
+        if not isinstance(obj, dict):
+            continue
+        for fld in date_fields:
+            val = obj.get(fld)
+            if not val:
+                continue
+            val_str = str(val)
+            if today_ist.strftime('%Y-%m-%d') in val_str or today_ist.strftime('%d-%m-%Y') in val_str or today_ist.strftime('%d/%m/%Y') in val_str:
+                return True
+            try:
+                num = float(val)
+                if num > 1e11:
+                    num = num / 1000.0
+                dt = datetime.fromtimestamp(num, tz=pytz.timezone('Asia/Kolkata')).date()
+                if dt == today_ist:
+                    return True
+            except:
+                pass
+    return False
+
+async def fetch_item_details(session, api_base, course_id, item, headers, today_only=False):
     """Fetch details for a single item (video/pdf)."""
     try:
         fi = item.get("id")
@@ -71,6 +98,9 @@ async def fetch_item_details(session, api_base, course_id, item, headers):
             r4 = await response.json()
             data = r4.get("data")
             if not data:
+                return []
+
+            if today_only and not is_today_mix_item(item, data):
                 return []
 
             vt = data.get("Title", "")
@@ -121,7 +151,7 @@ async def fetch_item_details(session, api_base, course_id, item, headers):
         logger.error(f"Error fetching item details: {e}")
         return []
 
-async def fetch_folder_contents(session, api_base, course_id, folder_id, headers):
+async def fetch_folder_contents(session, api_base, course_id, folder_id, headers, today_only=False):
     """Recursively fetch contents of a folder."""
     try:
         outputs = []
@@ -135,10 +165,10 @@ async def fetch_folder_contents(session, api_base, course_id, folder_id, headers
             if "data" in j:
                 for item in j["data"]:
                     # Process individual items
-                    tasks.append(fetch_item_details(session, api_base, course_id, item, headers))
+                    tasks.append(fetch_item_details(session, api_base, course_id, item, headers, today_only=today_only))
                     # Recursively process subfolders
                     if item.get("material_type") == "FOLDER":
-                        tasks.append(fetch_folder_contents(session, api_base, course_id, item["id"], headers))
+                        tasks.append(fetch_folder_contents(session, api_base, course_id, item["id"], headers, today_only=today_only))
 
             if tasks:
                 results = await asyncio.gather(*tasks)
@@ -152,7 +182,7 @@ async def fetch_folder_contents(session, api_base, course_id, folder_id, headers
         logger.error(f"Error fetching folder contents: {e}")
         return []
 
-async def v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_base, sanitized_course_name, start_time, start, end, pricing, input2, m1, m2):
+async def v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_base, sanitized_course_name, start_time, start, end, pricing, input2, m1, m2, today_only=False):
     """Process and extract course content."""
     try:
         progress_msg = await message.reply_text(
@@ -184,9 +214,9 @@ async def v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_bas
                 processed = 0
                 
                 for item in j2["data"]:
-                    tasks.append(fetch_item_details(session, api_base, raw_text2, item, hdr1))
+                    tasks.append(fetch_item_details(session, api_base, raw_text2, item, hdr1, today_only=today_only))
                     if item["material_type"] == "FOLDER":
-                        tasks.append(fetch_folder_contents(session, api_base, raw_text2, item["id"], hdr1))
+                        tasks.append(fetch_folder_contents(session, api_base, raw_text2, item["id"], hdr1, today_only=today_only))
                     
                     processed += 1
                     if processed % 5 == 0:  # Update progress every 5 items
@@ -203,7 +233,10 @@ async def v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_bas
                         all_outputs.extend(res)
 
             if not all_outputs:
-                await progress_msg.edit_text("❌ <b>No content found in this batch</b>")
+                if today_only:
+                    await progress_msg.edit_text("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+                else:
+                    await progress_msg.edit_text("❌ <b>No content found in this batch</b>")
                 return
 
             # Count content types
@@ -222,10 +255,11 @@ async def v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_bas
             minutes, seconds = divmod(duration.total_seconds(), 60)
 
             # Prepare caption
+            batch_display_title = f"{sanitized_course_name} (Today's Class)" if today_only else sanitized_course_name
             caption = (
                 f"🎓 <b>COURSE EXTRACTED</b> 🎓\n\n"
                 f"📱 <b>APP:</b> {app_name}\n"
-                f"📚 <b>BATCH:</b> {sanitized_course_name}\n"
+                f"📚 <b>BATCH:</b> {batch_display_title}\n"
                 f"⏱ <b>EXTRACTION TIME:</b> {int(minutes):02d}:{int(seconds):02d}\n"
                 f"📅 <b>DATE:</b> {datetime.now(pytz.timezone('Asia/Kolkata')).strftime('%d-%m-%Y %H:%M:%S')} IST\n\n"
                 f"📊 <b>CONTENT STATS</b>\n"
@@ -238,17 +272,18 @@ async def v2_new(app, message, token, userid, hdr1, app_name, raw_text2, api_bas
             )
 
             # Send file
-            await message.reply_document(
-                document=file_name,
-                caption=caption
-            )
-            await app.send_document(PREMIUM_LOGS, file_name, caption=caption)
-
-            # Cleanup
             try:
-                os.remove(file_name)
-            except:
-                pass
+                await message.reply_document(
+                    document=file_name,
+                    caption=caption
+                )
+                await app.send_document(PREMIUM_LOGS, file_name, caption=caption)
+            finally:
+                if os.path.exists(file_name):
+                    try:
+                        os.remove(file_name)
+                    except:
+                        pass
 
             # Delete temporary messages
             for msg in [input2, m1, m2]:

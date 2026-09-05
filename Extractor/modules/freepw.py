@@ -437,7 +437,13 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                 else:
                     raise Exception("Invalid batch index.")
                     
-                await editable.edit("1.```\nFull Batch```\n2.```\nToday's Class```\n3.```\nKhazana```")
+                extraction_type_prompt = (
+                    f"✅ **Batch selected:** {selected_batch_name}\n\n"
+                    "**Choose extraction type:**\n\n"
+                    "1️⃣ 1 — 📦 **Full Batch**\n"
+                    "2️⃣ 2 — 📅 **Today's Class**"
+                )
+                await editable.edit(extraction_type_prompt)
                     
                 try:
                     input6 = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
@@ -458,7 +464,7 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
 
                 start_time = time.time()
 
-                if input6.text == '1':
+                if input6.text.strip() == '1':
                 
                     url = f"https://api.penpencil.co/v3/batches/{selected_batch_id}/details"
                     batch_details = await fetch_pwwp_data(session, url, headers=headers)
@@ -486,21 +492,19 @@ async def process_pwwp(bot: Client, m: Message, user_id: int):
                     else:
                         raise Exception(f"Error fetching batch details: {batch_details.get('message')}")
                     
-                elif input6.text == '2':
+                elif input6.text.strip() == '2':
                     
-                    selected_batch_name = "Today's Class"
+                    selected_batch_name = f"{selected_batch_name} - Today's Class"
                     today_schedule = await get_pwwp_all_todays_schedule_content(session, selected_batch_id, headers)
                     if today_schedule:
                         with open(f"{clean_file_name}.txt", "w", encoding="utf-8") as f:
                             f.writelines(today_schedule)
                     else:
-                        raise Exception("No Classes Found Today")
+                        await editable.edit("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+                        return
                         
-                elif input6.text == '3':
-                    raise Exception("Working In Progress")
-                    
                 else:
-                    raise Exception("Invalid index.")
+                    raise Exception("Invalid option. Please enter 1 or 2.")
                     
                 end_time = time.time()
                 response_time = end_time - start_time

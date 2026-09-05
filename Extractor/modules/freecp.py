@@ -123,7 +123,32 @@ async def process_cpwp_url(url_val: str, name: str, session: aiohttp.ClientSessi
         return None
 
 
-async def get_cpwp_course_content(session: aiohttp.ClientSession, headers: Dict[str, str], Batch_Token: str, folder_id: int = 0, limit: int = 9999999999, retry_count: int = 0) -> Tuple[List[str], int, int, int]:
+def is_today_cp_item(item):
+    if not isinstance(item, dict):
+        return False
+    today_ist = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+    for fld in ['createdAt', 'publishDate', 'date', 'liveDate', 'start_date', 'startDate', 'scheduleDate', 'updatedAt']:
+        val = item.get(fld)
+        if not val:
+            continue
+        val_str = str(val)
+        if today_ist.strftime('%Y-%m-%d') in val_str or today_ist.strftime('%d-%m-%Y') in val_str or today_ist.strftime('%d/%m/%Y') in val_str:
+            return True
+        try:
+            num = float(val)
+            if num > 1e11:
+                num = num / 1000.0
+            dt = datetime.fromtimestamp(num, tz=pytz.timezone('Asia/Kolkata')).date()
+            if dt == today_ist:
+                return True
+        except:
+            pass
+    name = item.get('name', '')
+    if today_ist.strftime('%d-%m-%Y') in name or today_ist.strftime('%d/%m/%Y') in name or today_ist.strftime('%Y-%m-%d') in name or today_ist.strftime('%d %b %Y') in name:
+        return True
+    return False
+
+async def get_cpwp_course_content(session: aiohttp.ClientSession, headers: Dict[str, str], Batch_Token: str, folder_id: int = 0, limit: int = 9999999999, retry_count: int = 0, today_only: bool = False) -> Tuple[List[str], int, int, int]:
     MAX_RETRIES = 5
     TIMEOUT = 120
     fetched_urls: set[str] = set()
@@ -142,7 +167,7 @@ async def get_cpwp_course_content(session: aiohttp.ClientSession, headers: Dict[
             if res.status == 429:
                 wait_time = min(2 ** retry_count, 30)
                 await asyncio.sleep(wait_time)
-                return await get_cpwp_course_content(session, headers, Batch_Token, folder_id, limit, retry_count + 1)
+                return await get_cpwp_course_content(session, headers, Batch_Token, folder_id, limit, retry_count + 1, today_only=today_only)
                 
             res.raise_for_status()
             res_json = await res.json()
@@ -154,9 +179,11 @@ async def get_cpwp_course_content(session: aiohttp.ClientSession, headers: Dict[
                 
                 for content in chunk:
                     if content['contentType'] == 1:  # Folder
-                        folder_task = asyncio.create_task(get_cpwp_course_content(session, headers, Batch_Token, content['id'], retry_count=0))
+                        folder_task = asyncio.create_task(get_cpwp_course_content(session, headers, Batch_Token, content['id'], retry_count=0, today_only=today_only))
                         folder_tasks.append((content['id'], folder_task))
                     else:
+                        if today_only and not is_today_cp_item(content):
+                            continue
                         name: str = content['name']
                         url_val: str | None = content.get('url') or content.get('thumbnailUrl')
 
@@ -455,6 +482,27 @@ async def process_cpwp(bot: Client, m: Message, user_id: int):
                             await editable.edit(f"**Error: {e}**")
                             return
 
+                        # Prompt for extraction type: Full Batch vs Today's Class
+                        opt_prompt = await m.reply_text(
+                            "**Choose extraction type:**\n\n"
+                            "1️⃣ 1 — 📦 **Full Batch**\n"
+                            "2️⃣ 2 — 📅 **Today's Class**"
+                        )
+                        today_only = False
+                        try:
+                            opt_input = await bot.listen(chat_id=m.chat.id, filters=filters.user(user_id), timeout=120)
+                            if opt_input and opt_input.text:
+                                if opt_input.text.strip() == "2":
+                                    today_only = True
+                            await opt_input.delete(True)
+                        except:
+                            pass
+                        finally:
+                            try:
+                                await opt_prompt.delete()
+                            except:
+                                pass
+
                     except Exception as e:
                         error_msg = f"**Error : {e}**"
                         if editable:
@@ -533,7 +581,7 @@ async def process_cpwp(bot: Client, m: Message, user_id: int):
                                 Batch_Token = res_json['data']['hash']
                                 App_Name = res_json['data']['name']
 
-                                course_content, video_count, pdf_count, image_count = await get_cpwp_course_content(session, headers, Batch_Token)
+                                course_content, video_count, pdf_count, image_count = await get_cpwp_course_content(session, headers, Batch_Token, today_only=today_only)
                                 
                                 if course_content:
                                     # Create individual file for this batch
@@ -616,7 +664,10 @@ async def process_cpwp(bot: Client, m: Message, user_id: int):
                                         except:
                                             pass
                                 else:
-                                    await m.reply_text(f"**No content found in batch: {selected_batch_name}**")
+                                    if today_only:
+                                        await m.reply_text("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+                                    else:
+                                        await m.reply_text(f"**No content found in batch: {selected_batch_name}**")
                             else:
                                 await m.reply_text(f"**Error fetching batch {selected_batch_name}: {response.text}**")
                     except Exception as e:

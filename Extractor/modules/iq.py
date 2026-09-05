@@ -50,10 +50,17 @@ async def login(app, m, all_urls, start_time, bname, batch_id, app_name, price=N
         f"<code>╾───• Anonymous TXT Extractor •───╼</code>"
     )
     
-    async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
-        await f.writelines([url + '\n' for url in all_urls])
-    copy = await m.reply_document(document=file_path, caption=caption, parse_mode="html")
-    await app.send_document(PREMIUM_LOGS, file_path, caption=caption, parse_mode="html")
+    try:
+        async with aiofiles.open(file_path, 'w', encoding='utf-8') as f:
+            await f.writelines([url + '\n' for url in all_urls])
+        copy = await m.reply_document(document=file_path, caption=caption, parse_mode="html")
+        await app.send_document(PREMIUM_LOGS, file_path, caption=caption, parse_mode="html")
+    finally:
+        if os.path.exists(file_path):
+            try:
+                os.remove(file_path)
+            except:
+                pass
 
 async def sanitize_bname(bname, max_length=50):
     bname = re.sub(r'[\\/:*?"<>|\t\n\r]+', '', bname).strip()
@@ -187,6 +194,16 @@ async def handle_iq_logic(app, m):
             else:
                 batch_ids = [input4.text]
 
+            opt_msg = await m.reply_text(
+                "**Choose extraction type:**\n\n"
+                "1️⃣ 1 — 📦 **Full Batch**\n"
+                "2️⃣ 2 — 📅 **Today's Class**"
+            )
+            opt_input = await app.listen(chat_id=m.chat.id)
+            today_only = (opt_input.text.strip() == "2")
+            await opt_input.delete()
+            await opt_msg.delete()
+
             for batch_id in batch_ids:
                 start_time = datetime.datetime.now()
                 progress_msg = await m.reply_text(
@@ -268,10 +285,25 @@ async def handle_iq_logic(app, m):
                                                     all_urls.append(cc)
                     await progress_msg.edit('**URL Writing Successfull**')
                     await progress_msg.delete()
+
+                    if today_only and all_urls:
+                        today_ist = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+                        t_patterns = [
+                            today_ist.strftime('%d-%m-%Y'),
+                            today_ist.strftime('%d/%m/%Y'),
+                            today_ist.strftime('%Y-%m-%d'),
+                            today_ist.strftime('%d %b %Y'),
+                            today_ist.strftime('%d %B %Y')
+                        ]
+                        all_urls = [u for u in all_urls if any(p in u for p in t_patterns)]
+
                     if all_urls:
                         await login(app, m, all_urls, start_time, bname, batch_id, app_name="Study IQ", price=None, start_date=None, imageUrl=None)
                     else:
-                        await progress_msg.edit("**No URLs found**")
+                        if today_only:
+                            await m.reply_text("❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+                        else:
+                            await progress_msg.edit("**No URLs found**")
 
     except Exception as e:
         await m.reply_text(

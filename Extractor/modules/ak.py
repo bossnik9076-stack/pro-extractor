@@ -392,71 +392,99 @@ class AKExtractor:
                     )
                     return
 
+                opt_prompt = await client.ask(
+                    message.chat.id,
+                    "**Choose extraction type:**\n\n"
+                    "1️⃣ 1 — 📦 **Full Batch**\n"
+                    "2️⃣ 2 — 📅 **Today's Class**",
+                    timeout=120
+                )
+                today_only = (opt_prompt.text.strip() == "2")
+
             # Process batch with concurrent requests
             start_time = time.time()
             results = await self.process_batch(headers, batch_id, status_msg)
             
+            if today_only and results:
+                today_ist = datetime.now(pytz.timezone('Asia/Kolkata')).date()
+                t_patterns = [
+                    today_ist.strftime('%d-%m-%Y'),
+                    today_ist.strftime('%d/%m/%Y'),
+                    today_ist.strftime('%Y-%m-%d'),
+                    today_ist.strftime('%d %b %Y'),
+                    today_ist.strftime('%d %B %Y')
+                ]
+                results = [(name, url) for name, url in results if any(p in name or p in url for p in t_patterns)]
+
             if not results:
-                await status_msg.edit_text(
-                    "❌ <b>No Content Found</b>\n\n"
-                    "This batch might be empty or inaccessible.",
-                    parse_mode=ParseMode.HTML
-                )
+                if today_only:
+                    await status_msg.edit_text(
+                        "❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**",
+                        parse_mode=ParseMode.HTML
+                    )
+                else:
+                    await status_msg.edit_text(
+                        "❌ <b>No Content Found</b>\n\n"
+                        "This batch might be empty or inaccessible.",
+                        parse_mode=ParseMode.HTML
+                    )
                 return
 
             # Write results to file using batch name
             batch_name = batch_info[batch_id]
             file_name = f"AK_{batch_name}-@CoreUG.txt"
-            with open(file_name, "w", encoding='utf-8') as f:
-                for name, url in results:
-                    f.write(f"{name}: {url}\n")
-
-            # Calculate stats
-            end_time = time.time()
-            elapsed_time = end_time - start_time
-            mention = f'<a href="tg://user?id={message.from_user.id}">{message.from_user.first_name}</a>'
-
-            # Format caption with batch name
-            caption = (
-                "🎓 <b>COURSE EXTRACTED</b> 🎓\n\n"
-                f"📱 <b>APP:</b> ApniKaksha\n"
-                f"📚 <b>BATCH:</b> {batch_info[batch_id]}\n"
-                f"⏱ <b>TIME TAKEN:</b> {elapsed_time:.1f}s\n"
-                f"📅 <b>DATE:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST\n\n"
-                f"📊 <b>CONTENT STATS</b>\n"
-                f"└─ 📁 Total Items: {len(results)}\n\n"
-                f"🚀 <b>Extracted by:</b> {mention}\n\n"
-                f"<code>╾───• {BOT_TEXT} •───╼</code>"
-            )
-
-            # Send file
-            await client.send_document(
-                message.chat.id,
-                document=file_name,
-                caption=caption,
-                thumb=await download_thumbnail() if await download_thumbnail() else None,
-                parse_mode=ParseMode.HTML
-            )
-
-            await client.send_document(
-                PREMIUM_LOGS,
-                document=file_name,
-                caption=caption,
-                thumb=await download_thumbnail() if await download_thumbnail() else None,
-                parse_mode=ParseMode.HTML
-            )
-
-            await status_msg.edit_text(
-                "✅ <b>Extraction Completed!</b>\n\n"
-                f"📊 Total Items: {len(results)}",
-                parse_mode=ParseMode.HTML
-            )
-
-            # Cleanup
             try:
-                os.remove(file_name)
-            except Exception as e:
-                logger.error(f"Error removing file: {e}")
+                with open(file_name, "w", encoding='utf-8') as f:
+                    for name, url in results:
+                        f.write(f"{name}: {url}\n")
+
+                # Calculate stats
+                end_time = time.time()
+                elapsed_time = end_time - start_time
+                mention = f'<a href="tg://user?id={message.from_user.id}">{message.from_user.first_name}</a>'
+
+                # Format caption with batch name
+                caption = (
+                    "🎓 <b>COURSE EXTRACTED</b> 🎓\n\n"
+                    f"📱 <b>APP:</b> ApniKaksha\n"
+                    f"📚 <b>BATCH:</b> {batch_info[batch_id]}\n"
+                    f"⏱ <b>TIME TAKEN:</b> {elapsed_time:.1f}s\n"
+                    f"📅 <b>DATE:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')} IST\n\n"
+                    f"📊 <b>CONTENT STATS</b>\n"
+                    f"└─ 📁 Total Items: {len(results)}\n\n"
+                    f"🚀 <b>Extracted by:</b> {mention}\n\n"
+                    f"<code>╾───• {BOT_TEXT} •───╼</code>"
+                )
+
+                # Send file
+                await client.send_document(
+                    message.chat.id,
+                    document=file_name,
+                    caption=caption,
+                    thumb=await download_thumbnail() if await download_thumbnail() else None,
+                    parse_mode=ParseMode.HTML
+                )
+
+                await client.send_document(
+                    PREMIUM_LOGS,
+                    document=file_name,
+                    caption=caption,
+                    thumb=await download_thumbnail() if await download_thumbnail() else None,
+                    parse_mode=ParseMode.HTML
+                )
+
+                await status_msg.edit_text(
+                    "✅ <b>Extraction Completed!</b>\n\n"
+                    f"📊 Total Items: {len(results)}",
+                    parse_mode=ParseMode.HTML
+                )
+            finally:
+                # Cleanup
+                if os.path.exists(file_name):
+                    try:
+                        os.remove(file_name)
+                    except Exception as e:
+                        logger.error(f"Error removing file: {e}")
 
         except Exception as e:
             logger.error(f"Error in start_command: {e}")

@@ -231,6 +231,16 @@ async def handle_utk_logic(app, m):
         else:
             batch_ids = [input2.text]
 
+        opt_msg = await m.reply_text(
+            "**Choose extraction type:**\n\n"
+            "1️⃣ 1 — 📦 **Full Batch**\n"
+            "2️⃣ 2 — 📅 **Today's Class**"
+        )
+        opt_input = await app.listen(chat_id=m.chat.id)
+        today_only = (opt_input.text.strip() == "2")
+        await opt_input.delete()
+        await opt_msg.delete()
+
         # Process each selected batch
         for batch_id in batch_ids:
             batch_id = batch_id.strip()  # Clean input
@@ -276,11 +286,25 @@ async def handle_utk_logic(app, m):
                 # Process subjects with new method
                 all_urls = await process_batch_subjects(app, subject_ids, subject, batch_id, headers, token, progress_msg, bname)
                 
+                if today_only and all_urls:
+                    today_ist = datetime.datetime.now(pytz.timezone('Asia/Kolkata')).date()
+                    t_patterns = [
+                        today_ist.strftime('%d-%m-%Y'),
+                        today_ist.strftime('%d/%m/%Y'),
+                        today_ist.strftime('%Y-%m-%d'),
+                        today_ist.strftime('%d %b %Y'),
+                        today_ist.strftime('%d %B %Y')
+                    ]
+                    all_urls = [u for u in all_urls if any(p in u for p in t_patterns)]
+
                 if all_urls:
                     print(colored(f"✅ Successfully extracted {len(all_urls)} URLs from batch {bname}", "green"))
                     await login(app, user_id, m, all_urls, start_time, bname, batch_id, progress_msg, app_name="Utkarsh")
                 else:
-                    await safe_edit_message(progress_msg, f"⚠️ No content URLs found in batch <code>{bname}</code>")
+                    if today_only:
+                        await safe_edit_message(progress_msg, "❌ **आज इस बैच में कोई भी क्लास नहीं हुई है या आज का कोई लिंक उपलब्ध नहीं है।**")
+                    else:
+                        await safe_edit_message(progress_msg, f"⚠️ No content URLs found in batch <code>{bname}</code>")
             except Exception as e:
                 print(colored(f"❌ Error processing batch {batch_id}: {e}", "red"))
                 await safe_edit_message(progress_msg, f"❌ Error processing batch: {str(e)}")
@@ -660,12 +684,10 @@ async def login(app, user_id, m, all_urls, start_time, bname, batch_id, progress
                     thumb=thumb_path
                 )
                 await app.send_document(txt_dump, file_path, caption=caption, thumb=thumb_path)
-                os.remove(thumb_path)
             else:
                 copy = await m.reply_document(document=file_path, caption=caption)
                 await app.send_document(txt_dump, file_path, caption=caption)
             
-            os.remove(file_path)
             await progress_msg.delete()
             print(colored("✅ File sent successfully!", "green"))
             
@@ -684,6 +706,17 @@ async def login(app, user_id, m, all_urls, start_time, bname, batch_id, progress
         except Exception as e:
             await safe_edit_message(progress_msg, f"❌ Error sending file: {str(e)}")
             print(colored(f"❌ Error sending file: {e}", "red"))
+        finally:
+            if thumb_path and os.path.exists(thumb_path):
+                try:
+                    os.remove(thumb_path)
+                except:
+                    pass
+            if os.path.exists(file_path):
+                try:
+                    os.remove(file_path)
+                except:
+                    pass
             
     except Exception as e:
         print(colored(f"❌ Error in login function: {e}", "red"))
